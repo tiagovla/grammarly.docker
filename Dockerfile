@@ -1,37 +1,40 @@
-FROM ubuntu:20.04
+FROM ubuntu:22.04 AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
-RUN dpkg --add-architecture i386
+ARG BUILD_DEPENENCIES="gnupg wget software-properties-common"
+RUN dpkg --add-architecture i386 \
+    && apt update && apt install -y $BUILD_DEPENENCIES \
+    winbind libgl1-mesa-glx:i386 libglu1-mesa:i386 cabextract \
+    # Download and add the repository key: [https://wiki.winehq.org/Ubuntu]
+    && wget -nc https://dl.winehq.org/wine-builds/winehq.key \
+    && mv winehq.key /usr/share/keyrings/winehq-archive.key \
+    # Add the repository: [https://wiki.winehq.org/Ubuntu]
+    && wget -nc https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources \
+    &&  mv winehq-jammy.sources /etc/apt/sources.list.d/ \
+    # Update packages and install staging version: [https://wiki.winehq.org/Ubuntu]
+    && apt update -y && apt install -y --install-recommends winehq-staging \
+    # Clear:
+    # && apt-get remove --purge -yqq $BUILD_DEPENDENCIES \
+    && apt-get autoremove -yqq && rm -rf /var/lib/apt/lists/*
 
-RUN apt update && apt install -y \
-    gnupg \
-    wget \
-    software-properties-common
+FROM base AS dotnet
 
-RUN wget -nc https://dl.winehq.org/wine-builds/winehq.key \
-    && apt-key add winehq.key \
-    && add-apt-repository 'deb https://dl.winehq.org/wine-builds/ubuntu/ focal main' \
-    && apt update -y \
-    && apt install -y --install-recommends winehq-staging
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt update && apt install -y  xvfb --install-recommends \
+    # Install winetricks:
+    && wget https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks -O /usr/local/bin/winetricks \
+    && chmod +x /usr/local/bin/winetricks \
+    # Clear:
+    && apt-get autoremove -yqq && rm -rf /var/lib/apt/lists/*
 
-RUN wget "https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks"\
-    && chmod +x winetricks\
-    && mv winetricks /usr/bin
+ENV WINEPREFIX /root/.wine
+ENV WINEARCH win32
+RUN wget "https://www.dropbox.com/s/taj4fvvqaiw9ld7/GrammarlySetup.exe?dl=1" -O GrammarlySetup.exe
+RUN apt update && apt install -y --no-install-recommends wget 
 
-RUN wget "https://download-editor.grammarly.com/windows/GrammarlySetup.exe"
-RUN apt-get install -y cabextract
+# FIX: install grammarly during building
+# RUN wineboot --init
+# RUN while pgrep -u root wineserver > /dev/null; do echo "waiting ..." sleep 1; done
+# RUN xvfb-run -a winetricks -q dotnet452
 
-ENV WINEDEBUG=fixme-all
-ENV WINEPREFIX=/root/.wine
-ENV WINEARCH=win32
-
-RUN winecfg
-RUN wineboot -u && winetricks -q dotnet452
-
-RUN winetricks win7
-RUN apt install firefox -y
-
-RUN wine "GrammarlySetup.exe" || :
-CMD wine "/root/.wine/drive_c/users/root/AppData/Local/GrammarlyForWindows/GrammarlyForWindows.exe" \
-    && while pgrep GrammarlyForWin>/dev/null; do sleep 2; done
-
+CMD if [ -f "/root/.wine/drive_c/users/root/AppData/Local/GrammarlyForWindows/GrammarlyForWindows.exe" ]; then wine "/root/.wine/drive_c/users/root/AppData/Local/GrammarlyForWindows/GrammarlyForWindows.exe" \ && while pgrep GrammarlyForWin>/dev/null; do sleep 2; done; else wineboot --init && winetricks -q --force dotnet452 && winetricks win7 && wine GrammarlySetup.exe && sleep 30 && while pgrep GrammarlyForWin>/dev/null; do sleep 2; fi
